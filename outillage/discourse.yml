@@ -1,0 +1,75 @@
+- hosts: all
+  user: root
+  vars:
+    discourse_name: discourse
+    discourse_hostname: forum.incubateur.anct.gouv.fr
+    discourse_admin_email: gael.demette+anct@qonfucius.team
+    config:
+      DISCOURSE_DB_USERNAME: "{{ discourse_db_user }}"
+      DISCOURSE_DB_PASSWORD: "{{ discourse_db_password }}"
+      DISCOURSE_DB_HOST: "{{ discourse_db_host }}"
+      DISCOURSE_DB_NAME: "{{ discourse_db_database }}"
+      DISCOURSE_DB_PORT: "{{ discourse_db_port }}"
+      DISCOURSE_USE_S3: "true"
+      DISCOURSE_S3_REGION: "fr-par"
+      DISCOURSE_S3_ENDPOINT: "https://s3.fr-par.scw.cloud"
+      DISCOURSE_S3_ACCESS_KEY_ID: "{{ discourse_s3_access_key_id }}"
+      DISCOURSE_S3_SECRET_ACCESS_KEY: "{{ discourse_s3_secret_access_key }}"
+      #DISCOURSE_S3_CDN_URL: "{{ discourse_s3_cdn_url }}"
+      DISCOURSE_S3_BUCKET: "{{ discourse_s3_bucket }}"
+
+  tasks:
+    - name: Get discourse plugin status
+      command: "dokku plugin:list | grep discourse"
+      register: dokku_plugin_discourse
+    - name: Add discourse plugin
+      command: dokku plugin:install https://github.com/badsyntax/dokku-discourse.git
+      when: dokku_plugin_discourse.stdout_lines|length == 0
+    - name: Enable discourse plugin
+      command: dokku plugin:enable {{discourse_name}}
+      when: dokku_plugin_discourse.stdout.find('disabled') != -1
+
+    - name: Check if discourse app exists
+      command: dokku apps:list | grep {{discourse_name}}
+      register: app_exists
+    - name: Ensure that directory exists
+      file:
+        path: /home/dokku/{{discourse_name}}
+        state: directory
+        recurse: yes
+        owner: dokku
+        group: dokku
+    - name: Template config file
+      template:
+        src: discourse_config.j2.yml
+        dest: /home/dokku/{{discourse_name}}/discourse_standalone.yml
+        owner: dokku
+        group: dokku
+    - name: Create discourse app
+      command: dokku discourse:create {{discourse_name}} {{ discourse_hostname }} --skip-env-config
+      # command: dokku discourse:create {{discourse_name}} {{ discourse_hostname }} {{ discourse_admin_email }} {{ discourse_smtp_address }} {{ discourse_smtp_port }} {{ discourse_smtp_user_name }} '{{ discourse_smtp_password }}'
+      when: app_exists.stdout.find(discourse_name) == -1
+
+    - name: Get config value
+      command: dokku config:get {{discourse_name}} {{item.key}}
+      register: dokku_config
+      with_dict: "{{config}}"
+      ignore_errors: yes
+
+    - name: Set config value
+      command: "dokku config:set --no-restart {{discourse_name}} {{item.item.key}}=\"{{item.item.value}}\""
+      with_items: "{{dokku_config.results}}"
+      when:
+        - item.stdout != item.item.value
+      notify: Restart {{ discourse_name }} app
+
+    - name: Get letsencrypt status
+      command: "dokku letsencrypt:list | grep {{discourse_name}} | wc -l"
+      register: dokku_letsencrypt
+    - name: Enable letsencrypt
+      command: "dokku letsencrypt:enable {{discourse_name}}"
+      when: dokku_letsencrypt.stdout.find('0') >= -1
+
+  handlers:
+    - name: Restart {{ discourse_name }} app
+      command: dokku ps:restart {{ discourse_name }}

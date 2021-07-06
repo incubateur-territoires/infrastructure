@@ -1,0 +1,12 @@
+- hosts: all
+  name: apache-install
+  tasks:
+    - name: Update all packages
+      apt:
+        upgrade: dist
+        update_cache: yes
+        cache_valid_time: 3600
+
+  handlers:
+    - name: Restart apache2
+      service: name=apache2 state=restarted
