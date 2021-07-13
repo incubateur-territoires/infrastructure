@@ -1,0 +1,1 @@
+export SCW_CONFIG_PATH=$HOME/.config/scw/config_incubateur-territoires.yaml
